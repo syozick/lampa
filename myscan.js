@@ -1,13 +1,13 @@
 (function () {
     'use strict';
 
-    // 1. Додаємо пункт статусу автопошуку в Налаштування -> TorrServer
+    // 1. Реєструємо параметр у SettingsApi
     if (window.Lampa && Lampa.SettingsApi) {
         Lampa.SettingsApi.addParam({
             component: 'torrserver',
             param: {
                 name: 'torrserver_auto_status',
-                type: 'static',
+                type: 'input',
                 default: 'Очікування...'
             },
             field: {
@@ -17,29 +17,48 @@
         });
     }
 
-    function updateStatus(text, url) {
-        Lampa.Storage.set('torrserver_auto_status', text);
+    // Запис у пам'ять та оновлення DOM
+    function setStatus(statusText, foundUrl) {
+        Lampa.Storage.set('torrserver_auto_status', statusText);
 
-        if (url) {
-            Lampa.Storage.set('torrserver_url', url);
-            Lampa.Storage.set('torrserver_url_two', url);
+        if (foundUrl) {
+            Lampa.Storage.set('torrserver_url', foundUrl);
+            Lampa.Storage.set('torrserver_url_two', foundUrl);
         }
 
-        // Відображення тексту в розгорнутому меню
-        var items = document.querySelectorAll('.settings-param');
-        for (var i = 0; i < items.length; i++) {
-            var item = items[i];
-            var textContent = item.textContent || '';
-            
-            if (url && textContent.indexOf('Основне посилання') !== -1) {
-                var valMain = item.querySelector('.settings-param__value');
-                if (valMain) valMain.textContent = url;
+        updateMenuDOM(statusText, foundUrl);
+    }
+
+    function updateMenuDOM(statusText, foundUrl) {
+        var params = document.querySelectorAll('.settings-param');
+        params.forEach(function (el) {
+            var nameEl = el.querySelector('.settings-param__name');
+            var valEl = el.querySelector('.settings-param__value');
+
+            if (nameEl && valEl) {
+                var title = nameEl.innerText || nameEl.textContent || '';
+                
+                if (title.indexOf('Автопошук TorrServer') !== -1) {
+                    valEl.textContent = statusText;
+                }
+                if (foundUrl && title.indexOf('Основне посилання') !== -1) {
+                    valEl.textContent = foundUrl;
+                }
             }
-            if (textContent.indexOf('Автопошук TorrServer') !== -1) {
-                var valAuto = item.querySelector('.settings-param__value');
-                if (valAuto) valAuto.textContent = text;
+        });
+    }
+
+    // При кожному відкритті меню налаштувань оновлюємо значення на екрані
+    if (window.Lampa && Lampa.Listener) {
+        Lampa.Listener.follow('settings', function (e) {
+            if (e.type === 'open' && e.component === 'torrserver') {
+                setTimeout(function () {
+                    var currentStatus = Lampa.Storage.get('torrserver_auto_status', 'Очікування...');
+                    var currentUrl = Lampa.Storage.get('torrserver_url', '');
+                    updateMenuDOM(currentStatus, currentUrl);
+                }, 100);
             }
-        }
+        });
     }
 
     function scanLocalTorrServer() {
@@ -47,11 +66,8 @@
         var port = '8090';
         var found = false;
 
-        updateStatus('Йде пошук...', '');
-
-        if (window.Lampa && Lampa.Noty) {
-            Lampa.Noty.show('Розпочато автопошук локального TorrServer...');
-        }
+        setStatus('Йде пошук...', '');
+        if (window.Lampa && Lampa.Noty) Lampa.Noty.show('Розпочато автопошук TorrServer...');
 
         var totalRequests = subnets.length * 253;
         var completedRequests = 0;
@@ -65,48 +81,46 @@
 
                 let xhr = new XMLHttpRequest();
                 xhr.open('GET', testUrl + '/echo', true);
-                xhr.timeout = 1200;
+                xhr.timeout = 1500;
 
                 function checkCompletion() {
                     completedRequests++;
                     if (!found && completedRequests >= totalRequests) {
-                        updateStatus('Не знайдено', '');
-                        if (window.Lampa && Lampa.Noty) {
-                            Lampa.Noty.show('TorrServer не знайдено в мережі');
-                        }
+                        setStatus('Не знайдено', '');
+                        if (window.Lampa && Lampa.Noty) Lampa.Noty.show('TorrServer не знайдено в мережі');
                     }
                 }
 
                 xhr.onload = function () {
-                    if (xhr.status === 200 && !found) {
+                    if ((xhr.status === 200 || xhr.status === 0) && !found && xhr.responseText) {
                         found = true;
-                        updateStatus(testUrl, testUrl);
-                        if (window.Lampa && Lampa.Noty) {
-                            Lampa.Noty.show('Знайдено TorrServer: ' + testUrl);
-                        }
+                        setStatus(testUrl, testUrl);
+                        if (window.Lampa && Lampa.Noty) Lampa.Noty.show('Знайдено TorrServer: ' + testUrl);
+                    } else {
+                        checkCompletion();
                     }
-                    checkCompletion();
                 };
 
                 xhr.onerror = checkCompletion;
                 xhr.ontimeout = checkCompletion;
 
-                xhr.send();
+                try { xhr.send(); } catch (e) { checkCompletion(); }
             }
         });
     }
 
     function start() {
-        setTimeout(scanLocalTorrServer, 500);
+        if (window.Lampa && Lampa.Noty) Lampa.Noty.show('Плагін автопошуку завантажено!');
+        setTimeout(scanLocalTorrServer, 1000);
     }
 
     if (window.appready) {
         start();
     } else if (window.Lampa && Lampa.Listener) {
         Lampa.Listener.follow('app', function (e) {
-            if (e.type == 'ready') start();
+            if (e.type === 'ready') start();
         });
     } else {
-        setTimeout(start, 1000);
+        setTimeout(start, 1500);
     }
 })();
