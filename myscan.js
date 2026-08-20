@@ -31,38 +31,53 @@
         isOpen: false
     };
 
-    /* ---------- Примусове переміщення пункту меню в самий верх ---------- */
+    /* ---------- Активне переміщення елемента на самий верх ---------- */
 
-    function moveComponentToTop() {
-        var target = document.querySelector('.settings-folder[data-component="' + OWN_COMPONENT + '"]');
-        if (target && target.parentNode) {
-            var parent = target.parentNode;
-            if (parent.firstChild !== target) {
-                parent.insertBefore(target, parent.firstChild);
+    function sortSettingsArray() {
+        try {
+            if (window.Lampa && Lampa.SettingsApi && typeof Lampa.SettingsApi.main === 'function') {
+                var mainList = Lampa.SettingsApi.main();
+                if (Array.isArray(mainList)) {
+                    var idx = -1;
+                    for (var i = 0; i < mainList.length; i++) {
+                        if (mainList[i] && mainList[i].component === OWN_COMPONENT) {
+                            idx = i;
+                            break;
+                        }
+                    }
+                    if (idx > 0) {
+                        var myComponent = mainList.splice(idx, 1)[0];
+                        mainList.unshift(myComponent); // Ставимо першим у масиві
+                    }
+                }
             }
-        }
+        } catch (e) {}
     }
 
-    // Спостерігач за появою елементів у меню налаштувань
-    function observeSettingsDOM() {
-        var observer = new MutationObserver(function (mutations, obs) {
-            var target = document.querySelector('.settings-folder[data-component="' + OWN_COMPONENT + '"]');
-            if (target) {
-                moveComponentToTop();
-                obs.disconnect(); // Вимикаємо після успішного переміщення
+    function moveDomToTop() {
+        var el = document.querySelector('.settings-folder[data-component="' + OWN_COMPONENT + '"]');
+        if (el && el.parentNode) {
+            var parent = el.parentNode;
+            if (parent.firstChild !== el) {
+                parent.insertBefore(el, parent.firstChild); // Ставимо першим у DOM
+                return true;
             }
-        });
+        }
+        return false;
+    }
 
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
+    function applyTopPositioning() {
+        sortSettingsArray();
 
-        // Застрахуємося додатковим таймером
-        setTimeout(function () {
-            moveComponentToTop();
-            observer.disconnect();
-        }, 1000);
+        var attempts = 0;
+        var timer = setInterval(function () {
+            attempts++;
+            sortSettingsArray();
+            var success = moveDomToTop();
+            if (success || attempts >= 30) {
+                clearInterval(timer);
+            }
+        }, 50);
     }
 
     /* ---------- Реєстрація в SettingsApi ---------- */
@@ -124,6 +139,8 @@
                 stopScan('Зупинено користувачем');
             }
         });
+
+        applyTopPositioning();
     }
 
     /* ---------- Робота зі статусом та DOM ---------- */
@@ -175,12 +192,10 @@
 
     if (window.Lampa && Lampa.Listener) {
         Lampa.Listener.follow('settings', function (e) {
-            // Відкриваємо головні налаштування — запускаємо спостереження
-            if (e.type === 'open' && !e.component) {
-                observeSettingsDOM();
+            if (e.type === 'open') {
+                applyTopPositioning();
             }
 
-            // Наш розділ
             if (e.component === OWN_COMPONENT) {
                 if (e.type === 'open') {
                     ui.isOpen = true;
