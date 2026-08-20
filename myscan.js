@@ -10,10 +10,13 @@
     var CONCURRENCY = 16;      // скільки запитів тримаємо одночасно "в польоті"
     var TIMEOUT_MS = 1200;
     var MAX_VALID_RESPONSE_LEN = 500; // echo від TorrServer короткий; усе набагато довше — не він
+    var UI_UPDATE_THROTTLE_MS = 500;  // не оновлювати екран частіше, ніж раз на цей інтервал
 
-    var STATUS_IDLE = 'Очікування...';
-    var STATUS_SCANNING = 'Йде пошук...';
+    var STATUS_IDLE = 'Очікування';
+    var STATUS_SCANNING = 'Йде пошук';
     var STATUS_NOT_FOUND = 'Не знайдено';
+
+    var OWN_COMPONENT = 'torrserver_autoscan';
 
     var state = {
         scanning: false,
@@ -25,16 +28,16 @@
         total: 0
     };
 
+    var ui = {
+        isOpen: false,        // чи зараз відкритий наш розділ налаштувань
+        lastUpdateAt: 0
+    };
+
     /* ---------- Реєстрація в SettingsApi ---------- */
 
-    // Назва компонента налаштувань TorrServer відрізняється між збірками LAMPA
-    // ('torrserver', 'server' тощо), тому вгадувати її ризиковано - поля можуть
-    // мовчки не з'явитися ніде. Замість цього створюємо ВЛАСНИЙ розділ
-    // налаштувань через addComponent - він завжди буде видимий у списку
-    // налаштувань як окремий пункт, незалежно від внутрішньої назви чужого
-    // компонента TorrServer.
-    var OWN_COMPONENT = 'torrserver_autoscan';
-
+    // Назва компонента налаштувань TorrServer відрізняється між збірками LAMPA,
+    // тому не вгадуємо її, а створюємо ВЛАСНИЙ розділ через addComponent —
+    // він завжди буде окремим пунктом у списку налаштувань.
     function registerSettings() {
         if (!(window.Lampa && Lampa.SettingsApi)) return;
 
@@ -47,8 +50,7 @@
                 });
             }
         } catch (e) {
-            // якщо в конкретній збірці addComponent відсутній/впав -
-            // просто йдемо далі, поля нижче все одно спробують зареєструватись
+            /* якщо addComponent недоступний у цій збірці - йдемо далі без нього */
         }
 
         Lampa.SettingsApi.addParam({
@@ -99,15 +101,26 @@
 
     /* ---------- Робота зі статусом і сховищем ---------- */
 
-    function setStatus(text) {
+    // Пишемо в Storage завжди (це дешево), а ось "живий" перерендер екрану -
+    // тільки якщо розділ відкритий і не частіше UI_UPDATE_THROTTLE_MS.
+    // Саме часті виклики Lampa.Settings.update() під час активного сканування
+    // (до 1000+ разів за прохід) і призводили до краху в app.min.js.
+    function setStatus(text, forceRender) {
         Lampa.Storage.set('torrserver_auto_status', text);
+
+        if (!ui.isOpen && !forceRender) return;
+
+        var now = Date.now();
+        if (!forceRender && (now - ui.lastUpdateAt) < UI_UPDATE_THROTTLE_MS) return;
+
+        ui.lastUpdateAt = now;
         refreshUI();
     }
 
     function saveFoundUrl(url) {
-        // Захист: ніколи не пишемо в torrserver_url нічого, крім
-        // рядка, який сама ж функція scanLocalTorrServer сконструювала
-        // як http://ip:port. Вміст відповіді сервера сюди не потрапляє.
+        // Ніколи не пишемо в torrserver_url нічого, крім рядка, який сама ж
+        // функція tryNextTarget сконструювала як http://ip:port.
+        // Вміст відповіді сервера (responseText) сюди ніколи не потрапляє.
         Lampa.Storage.set('torrserver_url', url);
         Lampa.Storage.set('torrserver_url_two', url);
     }
@@ -118,10 +131,15 @@
                 Lampa.Settings.update();
                 return;
             } catch (e) {
-                /* ідемо у DOM fallback нижче */
+                /* якщо впало всередині самого LAMPA - тихо йдемо у DOM fallback,
+                   щоб не ронити наш плагін через їхній рендер */
             }
         }
-        updateMenuDOM();
+        try {
+            updateMenuDOM();
+        } catch (e) {
+            /* ігноруємо помилки рендеру - на роботу сканування це не впливає */
+        }
     }
 
     function updateMenuDOM() {
@@ -162,11 +180,16 @@
 
     if (window.Lampa && Lampa.Listener) {
         Lampa.Listener.follow('settings', function (e) {
-            if (e.type === 'open' && e.component === OWN_COMPONENT) {
+            if (e.component !== OWN_COMPONENT) return;
+
+            if (e.type === 'open') {
+                ui.isOpen = true;
                 setTimeout(function () {
                     updateMenuDOM();
                     bindDomFallback();
                 }, 150);
+            } else if (e.type === 'close') {
+                ui.isOpen = false;
             }
         });
     }
@@ -200,7 +223,7 @@
         if (!state.scanning) return;
         state.scanning = false;
         abortActiveRequests();
-        setStatus(reasonText || STATUS_IDLE);
+        setStatus(reasonText || STATUS_IDLE, true);
         if (window.Lampa && Lampa.Noty) Lampa.Noty.show('Сканування зупинено');
     }
 
@@ -209,13 +232,13 @@
         state.found = true;
         abortActiveRequests();
         saveFoundUrl(url);
-        setStatus(url);
+        setStatus(url, true); // forceRender: фінальний стан показуємо одразу
         if (window.Lampa && Lampa.Noty) Lampa.Noty.show('Знайдено TorrServer: ' + url);
     }
 
     function finishWithNotFound() {
         state.scanning = false;
-        setStatus(STATUS_NOT_FOUND);
+        setStatus(STATUS_NOT_FOUND, true);
         if (window.Lampa && Lampa.Noty) Lampa.Noty.show('TorrServer не знайдено в мережі');
     }
 
@@ -241,7 +264,8 @@
 
             if (!state.scanning || state.found) return;
 
-            setStatus(STATUS_SCANNING + ' (' + state.completed + '/' + state.total + ')');
+            // Прогрес пишемо в Storage завжди, а рендер - через троттлінг у setStatus
+            setStatus(STATUS_SCANNING + ': ' + state.completed + ' з ' + state.total);
 
             if (state.nextIndex < state.total) {
                 tryNextTarget();
@@ -285,7 +309,7 @@
         state.completed = 0;
         state.total = state.targets.length;
 
-        setStatus(STATUS_SCANNING + ' (0/' + state.total + ')');
+        setStatus(STATUS_SCANNING + ': 0 з ' + state.total, true);
         if (window.Lampa && Lampa.Noty) Lampa.Noty.show('Розпочато пошук TorrServer...');
 
         var starters = Math.min(CONCURRENCY, state.total);
