@@ -5,7 +5,7 @@
        Плагін автопошуку TorrServer у локальній мережі для LAMPA
        ========================================================== */
 
-    var SUBNETS = ['192.168.1.', '192.168.0.', '192.168.31.', '192.168.88.', '192.168.5.'];
+    var SUBNETS = ['192.168.1.', '192.168.0.', '192.168.31.', '192.168.88.'];
     var PORT = '8090';
     var CONCURRENCY = 16;      // скільки запитів тримаємо одночасно "в польоті"
     var TIMEOUT_MS = 1200;
@@ -27,24 +27,45 @@
 
     /* ---------- Реєстрація в SettingsApi ---------- */
 
+    // Назва компонента налаштувань TorrServer відрізняється між збірками LAMPA
+    // ('torrserver', 'server' тощо), тому вгадувати її ризиковано - поля можуть
+    // мовчки не з'явитися ніде. Замість цього створюємо ВЛАСНИЙ розділ
+    // налаштувань через addComponent - він завжди буде видимий у списку
+    // налаштувань як окремий пункт, незалежно від внутрішньої назви чужого
+    // компонента TorrServer.
+    var OWN_COMPONENT = 'torrserver_autoscan';
+
     function registerSettings() {
         if (!(window.Lampa && Lampa.SettingsApi)) return;
 
+        try {
+            if (typeof Lampa.SettingsApi.addComponent === 'function') {
+                Lampa.SettingsApi.addComponent({
+                    component: OWN_COMPONENT,
+                    icon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 3" stroke="currentColor" stroke-width="2" fill="none"/></svg>',
+                    name: 'Автопошук TorrServer'
+                });
+            }
+        } catch (e) {
+            // якщо в конкретній збірці addComponent відсутній/впав -
+            // просто йдемо далі, поля нижче все одно спробують зареєструватись
+        }
+
         Lampa.SettingsApi.addParam({
-            component: 'torrserver',
+            component: OWN_COMPONENT,
             param: {
                 name: 'torrserver_auto_status',
                 type: 'input',
                 default: STATUS_IDLE
             },
             field: {
-                name: 'Автопошук TorrServer',
+                name: 'Статус пошуку',
                 description: 'Поточний статус локального сканування мережі'
             }
         });
 
         Lampa.SettingsApi.addParam({
-            component: 'torrserver',
+            component: OWN_COMPONENT,
             param: {
                 name: 'torrserver_auto_rescan',
                 type: 'button',
@@ -60,7 +81,7 @@
         });
 
         Lampa.SettingsApi.addParam({
-            component: 'torrserver',
+            component: OWN_COMPONENT,
             param: {
                 name: 'torrserver_auto_stop',
                 type: 'button',
@@ -113,7 +134,7 @@
             if (!nameEl || !valEl) return;
 
             var title = nameEl.innerText || nameEl.textContent || '';
-            if (title.indexOf('Автопошук TorrServer') !== -1) {
+            if (title.indexOf('Статус пошуку') !== -1) {
                 valEl.textContent = statusText;
             }
         });
@@ -141,7 +162,7 @@
 
     if (window.Lampa && Lampa.Listener) {
         Lampa.Listener.follow('settings', function (e) {
-            if (e.type === 'open' && e.component === 'torrserver') {
+            if (e.type === 'open' && e.component === OWN_COMPONENT) {
                 setTimeout(function () {
                     updateMenuDOM();
                     bindDomFallback();
