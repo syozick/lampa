@@ -31,18 +31,38 @@
         isOpen: false
     };
 
-    /* ---------- Переміщення пункту меню в самий верх ---------- */
+    /* ---------- Примусове переміщення пункту меню в самий верх ---------- */
 
     function moveComponentToTop() {
-        var menuItems = document.querySelectorAll('.settings-folder');
-        menuItems.forEach(function (el) {
-            if (el.dataset.component === OWN_COMPONENT) {
-                var parent = el.parentNode;
-                if (parent && parent.firstChild !== el) {
-                    parent.insertBefore(el, parent.firstChild);
-                }
+        var target = document.querySelector('.settings-folder[data-component="' + OWN_COMPONENT + '"]');
+        if (target && target.parentNode) {
+            var parent = target.parentNode;
+            if (parent.firstChild !== target) {
+                parent.insertBefore(target, parent.firstChild);
+            }
+        }
+    }
+
+    // Спостерігач за появою елементів у меню налаштувань
+    function observeSettingsDOM() {
+        var observer = new MutationObserver(function (mutations, obs) {
+            var target = document.querySelector('.settings-folder[data-component="' + OWN_COMPONENT + '"]');
+            if (target) {
+                moveComponentToTop();
+                obs.disconnect(); // Вимикаємо після успішного переміщення
             }
         });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+
+        // Застрахуємося додатковим таймером
+        setTimeout(function () {
+            moveComponentToTop();
+            observer.disconnect();
+        }, 1000);
     }
 
     /* ---------- Реєстрація в SettingsApi ---------- */
@@ -155,12 +175,12 @@
 
     if (window.Lampa && Lampa.Listener) {
         Lampa.Listener.follow('settings', function (e) {
-            // Якщо відкривається ГОЛОВНЕ меню налаштувань — піднімаємо пункт у самий верх
+            // Відкриваємо головні налаштування — запускаємо спостереження
             if (e.type === 'open' && !e.component) {
-                setTimeout(moveComponentToTop, 50);
+                observeSettingsDOM();
             }
 
-            // Якщо відкривається НАШ розділ налаштувань
+            // Наш розділ
             if (e.component === OWN_COMPONENT) {
                 if (e.type === 'open') {
                     ui.isOpen = true;
