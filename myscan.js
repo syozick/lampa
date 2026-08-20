@@ -5,12 +5,11 @@
        Плагін автопошуку TorrServer у локальній мережі для LAMPA
        ========================================================== */
 
-    var SUBNETS = ['192.168.1.', '192.168.0.', '192.168.31.', '192.168.88.'];
+    var BASE_SUBNETS = ['192.168.1.', '192.168.0.', '192.168.31.', '192.168.88.'];
     var PORT = '8090';
-    var CONCURRENCY = 16;      // скільки запитів тримаємо одночасно "в польоті"
-    var TIMEOUT_MS = 1200;
-    var MAX_VALID_RESPONSE_LEN = 500; // echo від TorrServer короткий; усе набагато довше — не він
-    var UI_UPDATE_THROTTLE_MS = 500;  // не оновлювати екран частіше, ніж раз на цей інтервал
+    var CONCURRENCY = 12;
+    var TIMEOUT_MS = 1500;
+    var MAX_VALID_RESPONSE_LEN = 500;
 
     var STATUS_IDLE = 'Очікування';
     var STATUS_SCANNING = 'Йде пошук';
@@ -29,15 +28,11 @@
     };
 
     var ui = {
-        isOpen: false,        // чи зараз відкритий наш розділ налаштувань
-        lastUpdateAt: 0
+        isOpen: false
     };
 
     /* ---------- Реєстрація в SettingsApi ---------- */
 
-    // Назва компонента налаштувань TorrServer відрізняється між збірками LAMPA,
-    // тому не вгадуємо її, а створюємо ВЛАСНИЙ розділ через addComponent —
-    // він завжди буде окремим пунктом у списку налаштувань.
     function registerSettings() {
         if (!(window.Lampa && Lampa.SettingsApi)) return;
 
@@ -49,20 +44,18 @@
                     name: 'Автопошук TorrServer'
                 });
             }
-        } catch (e) {
-            /* якщо addComponent недоступний у цій збірці - йдемо далі без нього */
-        }
+        } catch (e) {}
 
         Lampa.SettingsApi.addParam({
             component: OWN_COMPONENT,
             param: {
                 name: 'torrserver_auto_status',
-                type: 'input',
+                type: 'title', // Змінено на title, щоб LAMPA не намагалася читати його як поле вводу
                 default: STATUS_IDLE
             },
             field: {
                 name: 'Статус пошуку',
-                description: 'Поточний статус локального сканування мережі'
+                description: 'Поточний стан сканування'
             }
         });
 
@@ -99,66 +92,35 @@
         });
     }
 
-    /* ---------- Робота зі статусом і сховищем ---------- */
+    /* ---------- Робота зі статусом та DOM ---------- */
 
-    // Пишемо в Storage завжди (це дешево), а ось "живий" перерендер екрану -
-    // тільки якщо розділ відкритий і не частіше UI_UPDATE_THROTTLE_MS.
-    // Саме часті виклики Lampa.Settings.update() під час активного сканування
-    // (до 1000+ разів за прохід) і призводили до краху в app.min.js.
-    function setStatus(text, forceRender) {
+    function setStatus(text) {
         Lampa.Storage.set('torrserver_auto_status', text);
-
-        if (!ui.isOpen && !forceRender) return;
-
-        var now = Date.now();
-        if (!forceRender && (now - ui.lastUpdateAt) < UI_UPDATE_THROTTLE_MS) return;
-
-        ui.lastUpdateAt = now;
-        refreshUI();
+        updateStatusDOM(text);
     }
 
-    function saveFoundUrl(url) {
-        // Ніколи не пишемо в torrserver_url нічого, крім рядка, який сама ж
-        // функція tryNextTarget сконструювала як http://ip:port.
-        // Вміст відповіді сервера (responseText) сюди ніколи не потрапляє.
-        Lampa.Storage.set('torrserver_url', url);
-        Lampa.Storage.set('torrserver_url_two', url);
-    }
+    // Безпечне оновлення тексту без виклику Lampa.Settings.update()
+    function updateStatusDOM(text) {
+        if (!ui.isOpen) return;
 
-    function refreshUI() {
-        if (window.Lampa && Lampa.Settings && typeof Lampa.Settings.update === 'function') {
-            try {
-                Lampa.Settings.update();
-                return;
-            } catch (e) {
-                /* якщо впало всередині самого LAMPA - тихо йдемо у DOM fallback,
-                   щоб не ронити наш плагін через їхній рендер */
-            }
-        }
-        try {
-            updateMenuDOM();
-        } catch (e) {
-            /* ігноруємо помилки рендеру - на роботу сканування це не впливає */
-        }
-    }
-
-    function updateMenuDOM() {
-        var statusText = Lampa.Storage.get('torrserver_auto_status', STATUS_IDLE);
         var params = document.querySelectorAll('.settings-param');
-
         params.forEach(function (el) {
             var nameEl = el.querySelector('.settings-param__name');
-            var valEl = el.querySelector('.settings-param__value');
-            if (!nameEl || !valEl) return;
+            var valEl = el.querySelector('.settings-param__value') || el.querySelector('.settings-param__descr');
+            if (!nameEl) return;
 
             var title = nameEl.innerText || nameEl.textContent || '';
             if (title.indexOf('Статус пошуку') !== -1) {
-                valEl.textContent = statusText;
+                if (valEl) valEl.textContent = text;
             }
         });
     }
 
-    /* ---------- Клік по кнопках через DOM (fallback) ---------- */
+    function saveFoundUrl(url) {
+        Lampa.Storage.set('torrserver_url', url);
+        Lampa.Storage.set('torrserver_url_two', url);
+        Lampa.Storage.set('torrserver_use_link', 'one');
+    }
 
     function bindDomFallback() {
         var params = document.querySelectorAll('.settings-param');
@@ -185,9 +147,10 @@
             if (e.type === 'open') {
                 ui.isOpen = true;
                 setTimeout(function () {
-                    updateMenuDOM();
+                    var currentStatus = Lampa.Storage.get('torrserver_auto_status', STATUS_IDLE);
+                    updateStatusDOM(currentStatus);
                     bindDomFallback();
-                }, 150);
+                }, 100);
             } else if (e.type === 'close') {
                 ui.isOpen = false;
             }
@@ -196,25 +159,36 @@
 
     /* ---------- Логіка сканування ---------- */
 
+    function getAutoSubnet() {
+        var subnets = BASE_SUBNETS.slice();
+        try {
+            var locationHost = window.location.hostname;
+            if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(locationHost)) {
+                var parts = locationHost.split('.');
+                var detectedSubnet = parts[0] + '.' + parts[1] + '.' + parts[2] + '.';
+                if (subnets.indexOf(detectedSubnet) === -1) {
+                    subnets.unshift(detectedSubnet);
+                }
+            }
+        } catch (e) {}
+        return subnets;
+    }
+
     function buildTargetList() {
         var list = [];
-        SUBNETS.forEach(function (subnet) {
-            for (var i = 2; i <= 254; i++) {
+        var subnets = getAutoSubnet();
+        subnets.forEach(function (subnet) {
+            for (var i = 1; i <= 254; i++) {
                 list.push(subnet + i);
             }
         });
         return list;
     }
 
-    function looksLikeValidTorrServerResponse(text) {
-        if (typeof text !== 'string') return false;
-        if (text.length === 0 || text.length > MAX_VALID_RESPONSE_LEN) return false;
-        return true;
-    }
-
     function abortActiveRequests() {
-        state.activeXhrs.forEach(function (xhr) {
-            try { xhr.abort(); } catch (e) { /* ігноруємо */ }
+        state.activeXhrs.forEach(function (item) {
+            if (item.timer) clearTimeout(item.timer);
+            try { item.xhr.abort(); } catch (e) {}
         });
         state.activeXhrs = [];
     }
@@ -223,7 +197,7 @@
         if (!state.scanning) return;
         state.scanning = false;
         abortActiveRequests();
-        setStatus(reasonText || STATUS_IDLE, true);
+        setStatus(reasonText || STATUS_IDLE);
         if (window.Lampa && Lampa.Noty) Lampa.Noty.show('Сканування зупинено');
     }
 
@@ -232,39 +206,47 @@
         state.found = true;
         abortActiveRequests();
         saveFoundUrl(url);
-        setStatus(url, true); // forceRender: фінальний стан показуємо одразу
+        setStatus(url);
         if (window.Lampa && Lampa.Noty) Lampa.Noty.show('Знайдено TorrServer: ' + url);
     }
 
     function finishWithNotFound() {
         state.scanning = false;
-        setStatus(STATUS_NOT_FOUND, true);
+        setStatus(STATUS_NOT_FOUND);
         if (window.Lampa && Lampa.Noty) Lampa.Noty.show('TorrServer не знайдено в мережі');
     }
 
     function tryNextTarget() {
         if (!state.scanning || state.found) return;
 
-        if (state.nextIndex >= state.total) {
-            return; // адреси закінчились - чекаємо, доки активні запити доопрацюють
-        }
+        if (state.nextIndex >= state.total) return;
 
         var ip = state.targets[state.nextIndex++];
         var testUrl = 'http://' + ip + ':' + PORT;
 
         var xhr = new XMLHttpRequest();
-        state.activeXhrs.push(xhr);
-        xhr.open('GET', testUrl + '/echo', true);
-        xhr.timeout = TIMEOUT_MS;
+        var requestItem = { xhr: xhr, timer: null };
+        state.activeXhrs.push(requestItem);
 
-        function onRequestDone() {
+        var isHandled = false;
+
+        function onRequestDone(isSuccess) {
+            if (isHandled) return;
+            isHandled = true;
+
+            if (requestItem.timer) clearTimeout(requestItem.timer);
+
             state.completed++;
-            var idx = state.activeXhrs.indexOf(xhr);
+            var idx = state.activeXhrs.indexOf(requestItem);
             if (idx !== -1) state.activeXhrs.splice(idx, 1);
 
             if (!state.scanning || state.found) return;
 
-            // Прогрес пишемо в Storage завжди, а рендер - через троттлінг у setStatus
+            if (isSuccess) {
+                finishWithSuccess(testUrl);
+                return;
+            }
+
             setStatus(STATUS_SCANNING + ': ' + state.completed + ' з ' + state.total);
 
             if (state.nextIndex < state.total) {
@@ -274,24 +256,30 @@
             }
         }
 
-        xhr.onload = function () {
-            var ok = (xhr.status === 200 || xhr.status === 0) &&
-                     looksLikeValidTorrServerResponse(xhr.responseText);
+        requestItem.timer = setTimeout(function () {
+            try { xhr.abort(); } catch (e) {}
+            onRequestDone(false);
+        }, TIMEOUT_MS + 200);
 
-            if (ok && !state.found) {
-                finishWithSuccess(testUrl); // зберігаємо саме testUrl, не responseText
-            } else {
-                onRequestDone();
+        xhr.open('GET', testUrl + '/echo', true);
+        xhr.timeout = TIMEOUT_MS;
+
+        xhr.onreadystatechange = function () {
+            if (xhr.readyState === 4) {
+                var isOk = (xhr.status === 200 && xhr.responseText && xhr.responseText.length <= MAX_VALID_RESPONSE_LEN) ||
+                           (xhr.status === 0 && xhr.responseText && xhr.responseText.length > 0 && xhr.responseText.length <= MAX_VALID_RESPONSE_LEN);
+
+                onRequestDone(isOk);
             }
         };
 
-        xhr.onerror = onRequestDone;
-        xhr.ontimeout = onRequestDone;
+        xhr.onerror = function () { onRequestDone(false); };
+        xhr.ontimeout = function () { onRequestDone(false); };
 
         try {
             xhr.send();
         } catch (e) {
-            onRequestDone();
+            onRequestDone(false);
         }
     }
 
@@ -309,7 +297,7 @@
         state.completed = 0;
         state.total = state.targets.length;
 
-        setStatus(STATUS_SCANNING + ': 0 з ' + state.total, true);
+        setStatus(STATUS_SCANNING + ': 0 з ' + state.total);
         if (window.Lampa && Lampa.Noty) Lampa.Noty.show('Розпочато пошук TorrServer...');
 
         var starters = Math.min(CONCURRENCY, state.total);
