@@ -31,6 +31,20 @@
         isOpen: false
     };
 
+    /* ---------- Переміщення пункту меню в самий верх ---------- */
+
+    function moveComponentToTop() {
+        var menuItems = document.querySelectorAll('.settings-folder');
+        menuItems.forEach(function (el) {
+            if (el.dataset.component === OWN_COMPONENT) {
+                var parent = el.parentNode;
+                if (parent && parent.firstChild !== el) {
+                    parent.insertBefore(el, parent.firstChild);
+                }
+            }
+        });
+    }
+
     /* ---------- Реєстрація в SettingsApi ---------- */
 
     function registerSettings() {
@@ -50,7 +64,7 @@
             component: OWN_COMPONENT,
             param: {
                 name: 'torrserver_auto_status',
-                type: 'title', // Змінено на title, щоб LAMPA не намагалася читати його як поле вводу
+                type: 'title',
                 default: STATUS_IDLE
             },
             field: {
@@ -99,7 +113,6 @@
         updateStatusDOM(text);
     }
 
-    // Безпечне оновлення тексту без виклику Lampa.Settings.update()
     function updateStatusDOM(text) {
         if (!ui.isOpen) return;
 
@@ -142,17 +155,23 @@
 
     if (window.Lampa && Lampa.Listener) {
         Lampa.Listener.follow('settings', function (e) {
-            if (e.component !== OWN_COMPONENT) return;
+            // Якщо відкривається ГОЛОВНЕ меню налаштувань — піднімаємо пункт у самий верх
+            if (e.type === 'open' && !e.component) {
+                setTimeout(moveComponentToTop, 50);
+            }
 
-            if (e.type === 'open') {
-                ui.isOpen = true;
-                setTimeout(function () {
-                    var currentStatus = Lampa.Storage.get('torrserver_auto_status', STATUS_IDLE);
-                    updateStatusDOM(currentStatus);
-                    bindDomFallback();
-                }, 100);
-            } else if (e.type === 'close') {
-                ui.isOpen = false;
+            // Якщо відкривається НАШ розділ налаштувань
+            if (e.component === OWN_COMPONENT) {
+                if (e.type === 'open') {
+                    ui.isOpen = true;
+                    setTimeout(function () {
+                        var currentStatus = Lampa.Storage.get('torrserver_auto_status', STATUS_IDLE);
+                        updateStatusDOM(currentStatus);
+                        bindDomFallback();
+                    }, 100);
+                } else if (e.type === 'close') {
+                    ui.isOpen = false;
+                }
             }
         });
     }
